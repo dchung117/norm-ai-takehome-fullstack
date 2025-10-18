@@ -5,7 +5,7 @@ import qdrant_client
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
-from llama_index.core.schema import Document, MetadataMode
+from llama_index.core.schema import Document
 from llama_index.core import (
     VectorStoreIndex,
     Settings
@@ -139,7 +139,7 @@ class DocumentService:
 
 
 class QdrantService:
-    def __init__(self, k: int = 20, similarity_cutoff: float = 0.75):
+    def __init__(self, k: int = similarity_top_k, similarity_cutoff: float = 0.75):
         self.index = None
         self.citation_query_engine = None
         self.similarity_postprocessor = None
@@ -226,23 +226,33 @@ class QdrantService:
         return Output(query=query_str, response=response.response, citations=citations)
 
 
+def initialize_rag_service() -> QdrantService:
+    doc_service = DocumentService()
+    docs = doc_service.create_documents()
+
+    index = QdrantService(k = similarity_top_k, similarity_cutoff=similarity_cutoff)
+    index.connect()
+    index.load(docs)
+    return index
+
+
 if __name__ == "__main__":
     # Example workflow
     doc_service = DocumentService() # implemented
     docs = doc_service.create_documents() # NOT implemented
 
-    index = QdrantService(k=similarity_top_k) # implemented
+    index = QdrantService() # implemented
     index.connect() # implemented
     index.load(docs) # implemented
 
     response = index.query("what happens if I steal?")
-    print(response)
+    print(response, "\n")
     response = index.query("what happens if I have poach a slave?")
-    print(response)
+    print(response, "\n")
     response = index.query("what happens if I bake with sawdust in my flour?")
-    print(response)
+    print(response, "\n")
     response = index.query("what happens if I steal a car?")
-    print(response)
+    print(response, "\n")
 
 
 
