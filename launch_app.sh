@@ -12,5 +12,9 @@ if [ -z "$HOST_PORT" ]; then
   exit 1
 fi
 
+# build docker image of service from dockerfile
+docker build -t $CONTAINER_IMAGE .
+
+# launch serviec
 docker run -d -p $HOST_PORT:80 --name "${CONTAINER_IMAGE%:*}-container" "$CONTAINER_IMAGE"
 echo "Docker container '$CONTAINER_IMAGE' launched, mapped port $HOST_PORT to port 80."
