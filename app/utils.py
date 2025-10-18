@@ -1,4 +1,6 @@
 from pydantic import BaseModel
+from itertools import chain
+
 import qdrant_client
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -8,20 +10,25 @@ from llama_index.core import (
     VectorStoreIndex,
     Settings
 )
+from llama_index.core.postprocessor import SimilarityPostprocessor
+
 from llama_index.core.query_engine import CitationQueryEngine
-
-
 import pymupdf
+
+from dotenv import load_dotenv
 import re
 from dataclasses import dataclass
 import os
 
-# todo: use pydotenv
+load_dotenv()
 key = os.environ['OPENAI_API_KEY']
 document_file = os.environ["DOCUMENT_FILE"]
+model = os.environ["LLM_MODEL_NAME"]
+similarity_top_k = int(os.environ["SIMILARITY_TOP_K"])
+similarity_cutoff = float(os.environ["SIMILARITY_CUTOFF"])
 
 Settings.embed_model =OpenAIEmbedding()
-Settings.llm = OpenAI(api_key=key, model="gpt-4")
+Settings.llm = OpenAI(api_key=key, model=model)
 
 @dataclass
 class Input:
@@ -41,31 +48,30 @@ class Output(BaseModel):
 class DocumentService:
 
     """
-    Update this service to load the pdf and extract its contents.
-    The example code below will help with the data structured required
-    when using the QdrantService.load() method below. Note: for this
-    exercise, ignore the subtle difference between llama-index's
-    Document and Node classes (i.e, treat them as interchangeable).
-
-    # example code
-    def create_documents() -> list[Document]:
-
-        docs = [
-            Document(
-                metadata={"Section": "Law 1"},
-                text="Theft is punishable by hanging",
-            ),
-            Document(
-                metadata={"Section": "Law 2"},
-                text="Tax evasion is punishable by banishment.",
-            ),
-        ]
-
-        return docs
+    Service that loads PDF and parses each section into documents.
 
      """
 
     def create_documents(self) -> list[Document]:
+        """
+        Parses laws from PDF file. Laws are organized hierarchically (see example below):
+
+        1. Law topic 1
+            1.1 Law 1
+            1.2 Law 2
+                1.2.1 Law clause 2.1
+                1.2.2 Law clause 2.2
+
+        Each law (and law clause) are parsed into separate, individual documents.
+        Each document will also contain its corresponding law topic as well as parent laws that they fall under
+        (e.g. document for Law clause 1.2.1 will have metadata containing its topic (1. Law topic 1) as well as its parent law (1.2 Law))
+
+        Args:
+            None
+        Returns:
+            list[Documents]:
+                List of Llama index documents for each law w/ hierarchy of laws in the metadata.
+        """
         doc = pymupdf.open(document_file)
 
         # Concatenate text per page
@@ -105,12 +111,17 @@ class DocumentService:
                 while stack and len(stack[-1][0]) >= len(section_num):
                     stack.pop(-1)
 
-                metadata = {"topic": law_topic} | {
-                    f"parent_law_{i+1}":parent_law[1] for i,parent_law in enumerate(stack)
+                # metadata = {"topic": law_topic} | {
+                #     f"parent_law_{i+1}":parent_law[1] for i,parent_law in enumerate(stack)
+                # }
+                metadata = {"topic": law_topic, "section": section_num} | {
+                    "parent_laws": [parent_law[1] for parent_law in stack]
                 }
                 doc = Document(
                     text=line,
-                    metadata=metadata
+                    metadata=metadata,
+                    excluded_llm_metadata_keys=["parent_laws", "section"], # remove full hierarchy from LLM prompt,
+                    excluded_embed_metadata_keys=["section"],
                 )
                 documents.append(doc)
 
@@ -120,18 +131,20 @@ class DocumentService:
         # todo: save off documents?
         # for doc in documents:
         #     print("##### LAW #####")
-        #     print(doc.get_content(metadata_mode=MetadataMode.LLM))
-        #     # print(doc.get_content(metadata_mode=MetadataMode.EMBED))
+        #     # print(doc.get_content(metadata_mode=MetadataMode.LLM))
+        #     print(doc.get_content(metadata_mode=MetadataMode.EMBED))
         #     print("###############")
         #     print()
         return documents
 
 
 class QdrantService:
-    def __init__(self, k: int = 2):
+    def __init__(self, k: int = 20, similarity_cutoff: float = 0.75):
         self.index = None
         self.citation_query_engine = None
+        self.similarity_postprocessor = None
         self.k = k
+        self.similarity_cutoff = similarity_cutoff
 
     def connect(self) -> None:
         # create client
@@ -153,8 +166,15 @@ class QdrantService:
             # llm=OpenAI(api_key=key, model="gpt-4")
         )
 
+        # Set up the simliarity post-processor - filter out retrieved laws less than threshold
+        self.similarity_postprocessor = SimilarityPostprocessor(similarity_cutoff=self.similarity_cutoff)
+
         # create citationqueryengine
-        self.citation_query_engine = CitationQueryEngine.from_args(index=self.index)
+        self.citation_query_engine = CitationQueryEngine.from_args(index=self.index,
+                                                                   similarity_top_k=self.k,
+                                                                #    citation_chunk_size=512,
+                                                                   node_postprocessors=[self.similarity_postprocessor]
+                                                                   )
 
     def load(self, docs = list[Document]):
         self.index.insert_nodes(docs)
@@ -186,7 +206,24 @@ class QdrantService:
 
         """
         # todo: prompt for llm call (system prompt, give query + retrieved laws, instruct to only answer question using laws given in context. 
-        # if it can't be answered by context, explain that there's no relevant info in the laws.
+        # todo: if it can't be answered by context, explain that there's no relevant info in the laws.
+        response = self.citation_query_engine.query(query_str)
+
+        # extract citations from response (i.e. only return sources that were referenced in the response to client)
+        citation_pattern = r'\[\d+(?:,\d+)*\]'
+        citation_idxs_raw = [idx_str[1:-1] for idx_str in re.findall(citation_pattern, response.response)]
+        citation_idxs_parsed = list(chain.from_iterable([[int(idx)-1 for idx in idx_str.split(",")] for idx_str in citation_idxs_raw]))
+
+        citation_nodes = [response.source_nodes[i] for i in citation_idxs_parsed]
+        citations = [
+            Citation(
+                source=f"{node.metadata['topic']}: Section {node.metadata['section']}",
+                text=node.text,
+            )
+            for node in citation_nodes
+        ]
+
+        return Output(query=query_str, response=response.response, citations=citations)
 
 
 if __name__ == "__main__":
@@ -194,11 +231,18 @@ if __name__ == "__main__":
     doc_service = DocumentService() # implemented
     docs = doc_service.create_documents() # NOT implemented
 
-    index = QdrantService() # implemented
+    index = QdrantService(k=similarity_top_k) # implemented
     index.connect() # implemented
     index.load(docs) # implemented
 
-    # index.query("what happens if I steal?") # NOT implemented
+    response = index.query("what happens if I steal?")
+    print(response)
+    response = index.query("what happens if I have poach a slave?")
+    print(response)
+    response = index.query("what happens if I bake with sawdust in my flour?")
+    print(response)
+    response = index.query("what happens if I steal a car?")
+    print(response)
 
 
 
