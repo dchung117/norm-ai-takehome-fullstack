@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     app_context.pop("rag_service")
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(title="Westeros Law Q&A Service", lifespan=lifespan)
 
 @app.get("/")
 async def root():
