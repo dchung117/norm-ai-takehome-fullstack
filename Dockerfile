@@ -15,5 +15,8 @@ COPY ./app /norm-fullstack/app
 COPY ./docs /norm-fullstack/docs
 COPY .env /norm-fullstack/
 
+# Expose port 80
+EXPOSE 80
+
 # Command to run on container start
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80"]
