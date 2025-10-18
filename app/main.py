@@ -29,7 +29,7 @@ async def root():
     return {"message": "Westeros Law Q&A Service"}
 
 @app.get("/ask/")
-async def get_answer(query: str) -> Output:
+async def get_answer(query: str = Query(None, min_length=3, max_length=50, title="Question", description="Question about laws of Seven Kingdoms.")) -> Output:
     logging.info(f"Received query: {query}")
     if query:
         logging.info(f"Passing query to RAG service...")

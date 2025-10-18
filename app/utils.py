@@ -212,9 +212,9 @@ class QdrantService:
         # extract citations from response (i.e. only return sources that were referenced in the response to client)
         citation_pattern = r'\[\d+(?:,\d+)*\]'
         citation_idxs_raw = [idx_str[1:-1] for idx_str in re.findall(citation_pattern, response.response)]
-        citation_idxs_parsed = list(chain.from_iterable([[int(idx)-1 for idx in idx_str.split(",")] for idx_str in citation_idxs_raw]))
+        citation_idxs_parsed = set(chain.from_iterable([[int(idx)-1 for idx in idx_str.split(",")] for idx_str in citation_idxs_raw]))
 
-        citation_nodes = [response.source_nodes[i] for i in citation_idxs_parsed]
+        citation_nodes = [response.source_nodes[i] for i in sorted(citation_idxs_parsed)]
         citations = [
             Citation(
                 source=f"{node.metadata['topic']}: Section {node.metadata['section']}",
