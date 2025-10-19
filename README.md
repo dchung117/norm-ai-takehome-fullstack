@@ -57,4 +57,4 @@ The endpoint for passing questions to the Q&A service is the `GET /ask` endpoint
 
 The endpoint expects a mandatory query argument `query` - a question about any of the laws of the Seven Kingdoms (e.g. what happens if I steal?). Successful responses will return to the answer to the user's question as well as citations that reference the corresponding laws from the law document:
 
-~[alt text](docs/images/ask_endpoint_success_response.png)
+![alt text](docs/images/ask_endpoint_success_response.png)
