@@ -55,6 +55,10 @@ The endpoint for passing questions to the Q&A service is the `GET /ask` endpoint
 
 ![alt text](docs/images/ask_endpoint.png)
 
-The endpoint expects a mandatory query argument `query` - a question about any of the laws of the Seven Kingdoms (e.g. what happens if I steal?). Successful responses will return to the answer to the user's question as well as citations that reference the corresponding laws from the law document:
+The endpoint expects a mandatory query argument `query` - a question about any of the laws of the Seven Kingdoms (e.g. what happens if I steal?). Successful responses will return the answer to the user's question including citations that reference the corresponding laws from the law document passed in `DOCUMENT_FILE`:
 
 ![alt text](docs/images/ask_endpoint_success_response.png)
+
+Some interesting edge cases to also try out:
+    1. Empty query - the service should return a 400 response w/ the detail `Query was empty.`
+    2. Queries regarding laws not contained in the document (e.g. `what happens if I steal a car?`) - the response should explain that no relevant laws explain what happens if a car is stolen.
