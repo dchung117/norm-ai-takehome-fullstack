@@ -46,7 +46,6 @@ If the script runs successfully, there should be no error messages. Also, the im
 Docker container '$CONTAINER_IMAGE' launched, mapped port $HOST_PORT to port 80.
 ```
 
-
 ### 3. Using the service
 
 Since the server is built using FastAPI, the Q&A service can be accessed via the Swagger documentation page. After launching the containerized service locally in step 2, open a web browser and navigate to `localhost:$HOST_PORT/docs` in the search bar. The `HOST_PORT` is the value of `HOST_PORT` that you set as an environment variable in part 2.
@@ -62,3 +61,22 @@ The endpoint expects a mandatory query argument `query` - a question about any o
 Some interesting edge cases to also try out:
     1. Empty query - the service should return a 400 response w/ the detail `Query was empty.`
     2. Queries regarding laws not contained in the document (e.g. `what happens if I steal a car?`) - the response should explain that no relevant laws explain what happens if a car is stolen.
+
+## Appendix
+
+The appendix contains some assumptions and design choices made (with justifications) for the different components of the Q&A service.
+
+### 1. Law document vector store initialization
+
+todo: explain assumptions about format of the law document
+todo: explain why a PDF parser was used vs an LLM to parse out individual laws from document
+todo: explain why each document contained a particular law -> citations ideally should reference individual laws, not necessarily a collection of laws.
+todo: explain metadata construction (law topic, section number, parent laws) -> explain why parent laws were used in retrieval but not generation step. explain how parent laws were appended to metadata (treat each law section as a tree; dfs algorithm to append each individual law w/ its parent law hierarchy)
+
+### 2. Document retrieval implementation
+
+todo: explain why a larger value for similarity_top_k was selected -> some questions need to reference laws from different sections (e.g. what happens if I steal? -> mentioned in thievery and watch), too small values of k would exclude the information in watch, which is still relevant. this would create retrievals that would have likely collect all relevant laws but would also contain a lot of noise; similarity score cutoff was used to filter out the "noisier" documents after retrieval. This hyperparameter can be tuned.'
+
+### 3. Citation response post-processing
+
+todo: explain why not all retrieved citations were included in response -> the answer to the client's question doesn't cite every source retrieved by the index. in order to avoid confusion by the client/user, we select the laws that were directly cited in the response and pass those back to the client.
