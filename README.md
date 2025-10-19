@@ -40,7 +40,7 @@ export CONTAINER_IMAGE="norm-fullstack"
 export HOST_PORT=80
 ```
 
-If the script runs successfully, there should be no error messages. Also, the following message should appear in the terminal:
+If the script runs successfully, there should be no error messages. Also, the image hash and the following message should appear in the terminal:
 
 ```
 Docker container '$CONTAINER_IMAGE' launched, mapped port $HOST_PORT to port 80.
@@ -49,4 +49,12 @@ Docker container '$CONTAINER_IMAGE' launched, mapped port $HOST_PORT to port 80.
 
 ### 3. Using the service
 
+Since the server is built using FastAPI, the Q&A service can be accessed via the Swagger documentation page. After launching the containerized service locally in step 2, open a web browser and navigate to `localhost:$HOST_PORT/docs` in the search bar. The `HOST_PORT` is the value of `HOST_PORT` that you set as an environment variable in part 2.
 
+The endpoint for passing questions to the Q&A service is the `GET /ask` endpoint. It is the second drop-down tab under the `default` endpoints tab:
+
+![alt text](docs/images/ask_endpoint.png)
+
+The endpoint expects a mandatory query argument `query` - a question about any of the laws of the Seven Kingdoms (e.g. what happens if I steal?). Successful responses will return to the answer to the user's question as well as citations that reference the corresponding laws from the law document:
+
+~[alt text](docs/images/ask_endpoint_success_response.png)
