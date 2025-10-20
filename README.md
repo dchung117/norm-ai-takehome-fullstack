@@ -5,6 +5,7 @@ This repository contains backend and frontend code to host an AI-powered Q&A ser
 ## Setup
 
 ### 1. Environmental variables
+
 After cloning the repository, create a `.env` file that contains the following variables:
 
 1. OPENAI_API_KEY (str): API key for sending RAG queries to LLMs hosted in OpenAI API.
@@ -16,7 +17,8 @@ After cloning the repository, create a `.env` file that contains the following v
 5. SIMILARITY_CUTOFF (float): Vector retrieval post-processing hyperparameter applied during document retrieval to filter out less relevant documents before they are passed as context to the LLM for generation. Values are between `0.0-1.0` - higher values are more restrictive on similarity and filters out more documents (default: `0.8`).
 
 See example below:
-```
+
+```shell
 OPENAI_API_KEY="your-api-key"
 DOCUMENT_FILE="docs/laws.pdf"
 LLM_MODEL_NAME="gpt-4"
@@ -35,14 +37,14 @@ Before running the script, two more environmental variables must be set:
 
 See example below:
 
-```
+```shell
 export CONTAINER_IMAGE="norm-fullstack"
 export HOST_PORT=80
 ```
 
 If the script runs successfully, there should be no error messages. Also, the image hash and the following message should appear in the terminal:
 
-```
+```shell
 Docker container '$CONTAINER_IMAGE' launched, mapped port $HOST_PORT to port 80.
 ```
 
@@ -54,7 +56,7 @@ The endpoint for passing questions to the Q&A service is the `GET /ask` endpoint
 
 ![alt text](docs/images/ask_endpoint.png)
 
-The endpoint expects a mandatory query argument `query` - a question about any of the laws of the Seven Kingdoms (e.g. what happens if I steal?). Successful responses will return the answer to the user's question including citations that reference the corresponding laws from the law document passed in `DOCUMENT_FILE`:
+The endpoint expects a mandatory query argument `query` - a question about any of the laws of the Seven Kingdoms (e.g. what happens if I steal?). Successful responses will return the answer to the client's question including citations that reference the corresponding laws from the law document passed in `DOCUMENT_FILE`:
 
 ![alt text](docs/images/ask_endpoint_success_response.png)
 
@@ -68,15 +70,43 @@ The appendix contains some assumptions and design choices made (with justificati
 
 ### 1. Law document vector store initialization
 
-todo: explain assumptions about format of the law document
-todo: explain why a PDF parser was used vs an LLM to parse out individual laws from document
-todo: explain why each document contained a particular law -> citations ideally should reference individual laws, not necessarily a collection of laws.
-todo: explain metadata construction (law topic, section number, parent laws) -> explain why parent laws were used in retrieval but not generation step. explain how parent laws were appended to metadata (treat each law section as a tree; dfs algorithm to append each individual law w/ its parent law hierarchy)
+#### 1a. Parsing strategy
+
+As mentioned in section 1, the document parser expects the relevant documents to be contained in a single, text-only PDF file. It also assumes that the law document follows a standardized structure with law topics encased in enumerated sections (e.g. **1. Peace**) and the corresponding laws listed under each section (e.g. **2.1 king Maegor raised a set of laws that which forbade holy men from carrying arms**).
+
+Under these assumptions, a PDF parsing module was used instead of an LLM to extract and divide the laws into documents. Parsing modules are best-suited for standard, text-based document structure whereas LLMs are better suited to parse unstructured documents w/ mixed modalities (e.g. text, images) at the expense of API usage costs and uncertainties on data privacy and latency.
+
+#### 1b. Document construction
+
+Each document in the vector store encases a particular law (e.g. **3.1 The Widow's law reaffirms the right of the eldest son (or eldest daughter, if there are no sons) to inherit**). Since the answers returned by the Q&A service must contain individual citations from the set of laws, each document should ideally capture the smallest granularity of possible references, which would be individual laws.
+
+The metadata of each document (i.e. law) contains the following information:
+    1. Law topic (str) - the general topic of the law's section (e.g. **3. Widows**)
+    2. Section number (str) - the law's enumerated section number - this value is provided back to the client so that they can reference the original document (e.g. **3.1.2**)
+    3. Parent laws (list[str]) - an ordered list (hierarchy) of parent laws that the law is derived from
+
+Each law's section can be conceptualized as a tree. See the example below for setion **3. Widows**:
+
+- 3. Widows
+  - 3.1 The Widow's law reaffirms the right of the eldest son (or eldest daughter, if there are no sons to inherit)
+    - 3.1.1 However, the law requires the heirs to maintain their father's surviving widow...
+    - 3.1.2 The widows could no longer be driven from their late husband's castle...
+    - 3.1.3 The law similarily prevented men from disinheriting the children from an earlier marriage...
+
+In other words, each nested law inherits its context from its parent laws (e.g. for law 3.1.2, its parent laws is **3.1 The Widow's law reaffirms the right of the eldest son (or eldest daughter, if there are no sons) to inherit**). Therefore, each law's hierarchy of parent laws (if applicable) was appended to the metadata in order to provide additional context during document retrieval.
+
+In contrast to retrieval step, each law's parent law hierarchy is removed from the LLM context. This operation ensures that duplicate laws aren't passed to the LLM (i.e. reduce input context tokens). It also allows the LLM to focus its attention uniformly across each unique law vs having overexposure to parent laws with very deep child law hierarchies.
 
 ### 2. Document retrieval implementation
 
-todo: explain why a larger value for similarity_top_k was selected -> some questions need to reference laws from different sections (e.g. what happens if I steal? -> mentioned in thievery and watch), too small values of k would exclude the information in watch, which is still relevant. this would create retrievals that would have likely collect all relevant laws but would also contain a lot of noise; similarity score cutoff was used to filter out the "noisier" documents after retrieval. This hyperparameter can be tuned.'
+#### 2a. Selecting top k hyperparameter
+
+The number of documents retrieved per query (`SIMLIARITY_TOP_K`) was chosen to be relatively large compared to the number of documents in the corpus (i.e. `SIMLIARITY_TOP_K=10`, 31 documents in vector index). The reasoning was to account for certain questions that needed to reference laws from different sections. For example, an appropriate answer for "What happens if I steal?" should reference 4 laws from sections **2. Thievery** and **10. Watch** (i.e. thieves might be forced to join the Night's Watch). If the value of `SIMLIARITY_TOP_K` is smaller than 4, then the question couldn't be answered in its full entirety. Therefore, large values of `k` would increase the likelihood of capturing all relevant laws (i.e. high recall) at the expense of some "noise" (i.e. irrelevant laws).
+
+#### 2b. Using vector similarity as a filter
+
+In order to reduce the amount of noise in the larger sample of retrieved documents, a similarity cutoff hyperparameter (`SIMLIARITY_CUTOFF=0.75`) was used to filter out retrieved laws that are below a certain similarity threshold before the retrieval context is passed to the LLM for generation. Higher thresholds (i.e. closer to `1.0`) will significantly reduce the retrieved context but preserve the most similar laws. Lower thresholds (i.e. closer to `0.0`) will keep most of the documents and rely on the LLM to filter out the least relevant documents. This hyperparameter can be tuned, depending on the retrieval performance.
 
 ### 3. Citation response post-processing
 
-todo: explain why not all retrieved citations were included in response -> the answer to the client's question doesn't cite every source retrieved by the index. in order to avoid confusion by the client/user, we select the laws that were directly cited in the response and pass those back to the client.
+After an answer w/ citations is generated for the client's question, an additional citation filtering step is applied to only include the laws that were cited in the LLM response. The LLM doesn't rely on every retrieved citation in the context when answering the client's question. Therefore, only the laws that were directly cited in the answer were returned in the response to avoid confusion on the client's side.
