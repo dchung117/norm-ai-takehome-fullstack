@@ -79,12 +79,13 @@ class DocumentService:
         for page in doc:
             text += page.get_text()
 
-        # Divide text into sections (identify based on enumeration pattern)
+        # Divide text into sections (identify based on regex enumeration pattern)
         sections = []
         section_num_pattern = r'^(\d+\.)+'
         text_lines = text.split("\n")
         # print(text_lines)
         for i,line in enumerate(text_lines):
+            # logic to align text w/ section number
             if re.match(section_num_pattern, line):
                 law_text = ""
                 j = i + 1
@@ -95,7 +96,7 @@ class DocumentService:
                     j += 1
                 sections.append((line, law_text.strip()))
 
-        # Create documents
+        # Create documents (document = law + hierarchy of parent laws, law topic)
         documents = []
         stack = []
         law_topic_section_pattern = r'^\d+\.$'
@@ -107,7 +108,7 @@ class DocumentService:
                 stack = []
             else:
                 # Create document
-                # remove fully-explored laws from stack
+                # remove fully-explored laws from stack (i.e. dfs)
                 while stack and len(stack[-1][0]) >= len(section_num):
                     stack.pop(-1)
 
@@ -120,7 +121,7 @@ class DocumentService:
                     text=line,
                     metadata=metadata,
                     excluded_llm_metadata_keys=["parent_laws", "section"], # remove parent laws when passing retrievals to LLM (remove duplicate laws from emerging)
-                    excluded_embed_metadata_keys=["section"], # use parent laws when retrieving (expanded context)
+                    excluded_embed_metadata_keys=["section"], # use parent laws when retrieving (expanded context to supplement the similarity search)
                 )
                 documents.append(doc)
 
@@ -168,7 +169,7 @@ class QdrantService:
         # Set up the simliarity post-processor - filter out retrieved laws less than threshold
         self.similarity_postprocessor = SimilarityPostprocessor(similarity_cutoff=self.similarity_cutoff)
 
-        # create citationqueryengine
+        # create citationqueryengine (large number of returned documents, filter by similarity score thresholding)
         self.citation_query_engine = CitationQueryEngine.from_args(index=self.index,
                                                                    similarity_top_k=self.k,
                                                                 #    citation_chunk_size=512,
@@ -208,7 +209,7 @@ class QdrantService:
         # todo: if it can't be answered by context, explain that there's no relevant info in the laws.
         response = self.citation_query_engine.query(query_str)
 
-        # extract citations from response
+        # extract citations from response (regex pattern matching)
         citation_pattern = r'\[\d+(?:,\d+)*\]'
         citation_idxs_raw = [idx_str[1:-1] for idx_str in re.findall(citation_pattern, response.response)]
         citation_idxs_parsed = set(chain.from_iterable([[int(idx)-1 for idx in idx_str.split(",")] for idx_str in citation_idxs_raw]))
